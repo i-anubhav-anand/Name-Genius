@@ -25,35 +25,32 @@ export async function generateNames(input: NameGenerationInput): Promise<Generat
       throw new Error("Invalid input for name generation");
     }
 
-    // Determine the base URL for the API
+    // Determine the base URL for the API - prioritize custom domain if available
     let baseUrl = "";
-
-    // Handle different deployment environments safely
-    if (process.env.NEXT_PUBLIC_VERCEL_URL) {
-      // Use HTTPS for all Vercel deployments to prevent mixed-content issues
-      baseUrl = `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`;
-    } else if (process.env.VERCEL_URL) {
-      // Fallback to VERCEL_URL if NEXT_PUBLIC_VERCEL_URL isn't available
+    
+    // First check for custom domain or environment-specific variable
+    if (process.env.NEXT_PUBLIC_APP_URL) {
+      baseUrl = process.env.NEXT_PUBLIC_APP_URL;
+    }
+    // For preview deployments
+    else if (process.env.VERCEL_ENV === 'preview' && process.env.VERCEL_URL) {
       baseUrl = `https://${process.env.VERCEL_URL}`;
-    } else if (process.env.NODE_ENV === "development") {
+    }
+    // For production deployment
+    else if (process.env.VERCEL_URL) {
+      baseUrl = `https://${process.env.VERCEL_URL}`;
+    }
+    // Local development fallback
+    else if (process.env.NODE_ENV === "development") {
       baseUrl = "http://localhost:3000";
-    } else if (process.env.NEXT_PUBLIC_API_BASE_URL) {
-      // Use a custom environment variable if configured
-      baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
     }
 
     console.log(`Using API base URL: ${baseUrl}`);
 
-    // If no baseUrl could be determined, fall back to mock data in development
+    // If no baseUrl could be determined, fall back to mock data
     if (!baseUrl) {
-      if (process.env.NODE_ENV === "development") {
-        console.warn("No base URL could be determined, falling back to mock data");
-        return mockGenerateNames(input);
-      } else {
-        // In production, return an empty array instead of throwing to prevent server errors
-        console.error("No API URL could be determined in production");
-        return [];
-      }
+      console.warn("No base URL could be determined, falling back to mock data");
+      return mockGenerateNames(input);
     }
 
     // Simple fetch with one retry, using a safer approach for production
@@ -61,42 +58,76 @@ export async function generateNames(input: NameGenerationInput): Promise<Generat
     const timeoutId = setTimeout(() => controller.abort(), 25000); // Shorter timeout for production
     
     try {
+      // Create clean input object to avoid reference issues
+      const cleanInput = {
+        namingType: input.namingType,
+        description: input.description || "",
+        industry: input.industry,
+        traits: Array.isArray(input.traits) ? [...input.traits] : [input.traits]
+      };
+      
+      console.log(`Making API request to ${baseUrl}/api/generate-names`);
+      
       const response = await fetch(`${baseUrl}/api/generate-names`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          namingType: input.namingType,
-          description: input.description || "",
-          industry: input.industry,
-          traits: Array.isArray(input.traits) ? input.traits : [input.traits]
-        }),
+        body: JSON.stringify(cleanInput),
         cache: "no-store",
-        signal: controller.signal
+        signal: controller.signal,
+        // Add crucial next.js fetch options for server actions
+        next: { revalidate: 0 }
       });
       
       clearTimeout(timeoutId);
       
+      // Check status code first
       if (!response.ok) {
-        // Handle error responses more safely
-        let errorMsg = `API request failed with status ${response.status}`;
-        try {
-          const errorData = await response.json();
-          if (errorData.error) errorMsg = errorData.error;
-        } catch (_) {
-          // Ignore JSON parse errors
+        // For security in production, limit error detail
+        if (process.env.NODE_ENV === 'production') {
+          console.error(`API request failed with status ${response.status}`);
+          return mockGenerateNames(input); // Silently fallback in production
+        } else {
+          // In development, show more details
+          let errorMsg = `API request failed with status ${response.status}`;
+          try {
+            const errorData = await response.json();
+            if (errorData.error) errorMsg = errorData.error;
+          } catch (_) {
+            // Ignore JSON parse errors
+          }
+          throw new Error(errorMsg);
         }
-        throw new Error(errorMsg);
       }
       
       // Parse response safely
-      const data = await response.json();
-      return Array.isArray(data.names) ? data.names : [];
-    } catch (fetchError) {
-      console.warn("Initial fetch attempt failed, trying once more");
+      let data;
+      try {
+        data = await response.json();
+      } catch (jsonError) {
+        console.error("Failed to parse API response as JSON");
+        return mockGenerateNames(input);
+      }
       
-      // One retry in case of timeout or network issue
+      // Validate response structure
+      if (!data || !Array.isArray(data.names) || data.names.length === 0) {
+        console.warn("Invalid response format or empty names array");
+        return mockGenerateNames(input);
+      }
+      
+      return data.names;
+    } catch (fetchError: any) {
+      // For timeouts or network errors, try a direct mock rather than retrying
+      if (fetchError?.name === 'AbortError' || process.env.NODE_ENV === 'production') {
+        console.warn("API request timed out or failed, using mock data", fetchError);
+        return mockGenerateNames(input);
+      }
+      
+      // In development, show the error and retry once
+      console.warn("Initial fetch attempt failed, trying once more:", fetchError);
+      
+      // One retry in development only
       try {
         const retryResponse = await fetch(`${baseUrl}/api/generate-names`, {
           method: "POST",
@@ -107,19 +138,20 @@ export async function generateNames(input: NameGenerationInput): Promise<Generat
             namingType: input.namingType,
             description: input.description || "",
             industry: input.industry,
-            traits: Array.isArray(input.traits) ? input.traits : [input.traits]
+            traits: Array.isArray(input.traits) ? [...input.traits] : [input.traits]
           }),
-          cache: "no-store"
+          cache: "no-store",
+          next: { revalidate: 0 }
         });
         
         if (!retryResponse.ok) {
-          throw new Error(`API request failed with status ${retryResponse.status}`);
+          console.error(`Retry API request failed with status ${retryResponse.status}`);
+          return mockGenerateNames(input);
         }
         
         const data = await retryResponse.json();
-        return Array.isArray(data.names) ? data.names : [];
+        return Array.isArray(data.names) && data.names.length > 0 ? data.names : mockGenerateNames(input);
       } catch (retryError) {
-        // In production, return mock data rather than failing completely
         console.error("Both fetch attempts failed:", retryError);
         return mockGenerateNames(input);
       }
