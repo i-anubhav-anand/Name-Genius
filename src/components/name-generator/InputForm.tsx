@@ -73,7 +73,7 @@ export function InputForm({ onSubmit, onNamesGenerated, onError = () => {} }: In
     }
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
 
     if (!namingType || !description || !industry || selectedTraits.length === 0) {
@@ -86,29 +86,32 @@ export function InputForm({ onSubmit, onNamesGenerated, onError = () => {} }: In
     setIsSubmitting(true)
     onSubmit() // Notify parent to show loading state
 
-    try {
+    // Safely wrap the async call to prevent server component errors
+    setTimeout(() => {
+      // Create a safe copy of the input
       const input: NameGenerationInput = {
         namingType,
         description,
         industry,
-        traits: selectedTraits,
+        traits: selectedTraits.map(t => t), // Create a fresh copy
       }
 
-      // Use a simple direct call to the server action
-      const names = await generateNames(input)
-      
-      // Handle the response
-      if (names && names.length > 0) {
-        // Pass both names and input to parent
-        onNamesGenerated(names, input)
-      } else {
-        throw new Error("No names were generated. Please try again.")
-      }
-    } catch (error) {
-      console.error("Error generating names:", error)
-      setIsSubmitting(false)
-      onError(error instanceof Error ? error.message : "Failed to generate names. Please try again.")
-    }
+      // Call the server action with proper error handling
+      generateNames(input)
+        .then((names) => {
+          if (names && names.length > 0) {
+            // Pass both names and input to parent
+            onNamesGenerated(names, input)
+          } else {
+            throw new Error("No names were generated. Please try again.")
+          }
+        })
+        .catch((error) => {
+          console.error("Error generating names:", error)
+          setIsSubmitting(false)
+          onError(error instanceof Error ? error.message : "Failed to generate names. Please try again.")
+        })
+    }, 0)
   }
 
   return (

@@ -25,6 +25,9 @@ export default function NameGeneratorPage() {
   const [error, setError] = useState<string | null>(null)
   // Store the input form data for reuse across batches
   const [lastInput, setLastInput] = useState<NameGenerationInput | null>(null)
+  
+  // Flag to prevent multiple simultaneous API calls
+  const isGeneratingRef = useRef(false)
 
   // Use useRef instead of state for the timeout to avoid re-renders
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -43,7 +46,8 @@ export default function NameGeneratorPage() {
         setError("The name generation is taking longer than expected. Please try again.")
         setStep("input")
         setIsLoading(false)
-      }, 45000) // Extended to 45 seconds to allow for API call + retry
+        isGeneratingRef.current = false // Reset the flag
+      }, 40000) // Slightly shorter timeout
     }
 
     // Cleanup function to clear the timeout when the component unmounts or step changes
@@ -56,10 +60,19 @@ export default function NameGeneratorPage() {
   }, [step]) // Only depend on step, not on the timeout ref itself
 
   const handleNamesGenerated = (names: GeneratedName[], input?: NameGenerationInput) => {
+    if (!names || names.length === 0) {
+      setError("No names were generated. Please try again.")
+      setStep("input")
+      setIsLoading(false)
+      isGeneratingRef.current = false // Reset the flag
+      return
+    }
+    
     setGeneratedNames(names)
     setIsLoading(false)
     setError(null)
     setStep("swiper")
+    isGeneratingRef.current = false // Reset the flag
     
     // Save the input for future batches if provided
     if (input) {
@@ -78,42 +91,47 @@ export default function NameGeneratorPage() {
   }
 
   const handleBatchComplete = () => {
-    if (currentBatch < 3) {
+    if (currentBatch < 3 && lastInput && !isGeneratingRef.current) {
       setCurrentBatch((prev) => prev + 1)
       handleStartLoading()
       
-      // Instead of calling the server action directly, let's create a wrapper component
-      // that has the same API as InputForm to keep things consistent
-      if (lastInput) {
-        // Create a fake event object to prevent issues
-        const generateNextBatch = async () => {
-          try {
-            console.log(`Generating names for batch ${currentBatch + 1}...`)
-            const newNames = await generateNames({...lastInput})
-            handleNamesGenerated(newNames)
-          } catch (error) {
-            console.error("Error generating names for next batch:", error)
-            setIsLoading(false)
-            setError(error instanceof Error ? error.message : "Failed to generate names. Please try again.")
-            setStep("input")
-          }
+      // Prevent multiple simultaneous API calls
+      isGeneratingRef.current = true
+      
+      // Use a simpler approach with proper error handling
+      setTimeout(() => {
+        const safeInput = {
+          namingType: lastInput.namingType,
+          description: lastInput.description || "",
+          industry: lastInput.industry,
+          traits: Array.isArray(lastInput.traits) ? [...lastInput.traits] : [lastInput.traits],
         }
         
-        // Call the function safely
-        generateNextBatch().catch((error) => {
-          console.error("Unhandled error in generateNextBatch:", error)
-          setIsLoading(false)
-          setError("An unexpected error occurred. Please try again.")
-          setStep("input")
-        })
-      } else {
-        // Fallback in case input wasn't saved
-        setError("Unable to generate more names. Please start over.")
-        setStep("input")
-        setIsLoading(false)
-      }
-    } else {
+        console.log(`Generating names for batch ${currentBatch + 1}...`)
+        
+        generateNames(safeInput)
+          .then((newNames) => {
+            if (newNames && newNames.length > 0) {
+              handleNamesGenerated(newNames)
+            } else {
+              throw new Error("No names were generated")
+            }
+          })
+          .catch((error) => {
+            console.error("Error generating names for next batch:", error)
+            setError("Unable to generate more names. Please try again.")
+            setStep("input")
+            setIsLoading(false)
+            isGeneratingRef.current = false
+          })
+      }, 100) // Small delay to allow React to update the UI
+    } else if (currentBatch >= 3) {
       setStep("results")
+    } else {
+      // Fallback in case input wasn't saved
+      setError("Unable to generate more names. Please start over.")
+      setStep("input")
+      setIsLoading(false)
     }
   }
 
@@ -124,12 +142,14 @@ export default function NameGeneratorPage() {
     setCurrentBatch(1)
     setError(null)
     setLastInput(null)
+    isGeneratingRef.current = false
   }
 
   const handleError = (errorMessage: string) => {
     setIsLoading(false)
     setError(errorMessage)
     setStep("input")
+    isGeneratingRef.current = false
   }
 
   const handleRetry = () => {
