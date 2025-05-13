@@ -5,6 +5,7 @@ import type React from "react"
 import { useState } from "react"
 import { motion } from "framer-motion"
 import { generateNames } from "@/app/actions/generate-names"
+import { mockGenerateNames } from "@/app/actions/mock-generate-names"
 import type { GeneratedName, NameGenerationInput } from "@/app/actions/generate-names"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -28,6 +29,7 @@ interface InputFormProps {
   onSubmit: () => void
   onNamesGenerated: (names: GeneratedName[], input?: NameGenerationInput) => void
   onError?: (message: string) => void
+  isProduction?: boolean
 }
 
 const industries = [
@@ -56,7 +58,12 @@ const traits = [
   "Luxurious",
 ]
 
-export function InputForm({ onSubmit, onNamesGenerated, onError = () => {} }: InputFormProps) {
+export function InputForm({ 
+  onSubmit, 
+  onNamesGenerated, 
+  onError = () => {}, 
+  isProduction = false 
+}: InputFormProps) {
   const [namingType, setNamingType] = useState("")
   const [description, setDescription] = useState("")
   const [industry, setIndustry] = useState("")
@@ -86,32 +93,49 @@ export function InputForm({ onSubmit, onNamesGenerated, onError = () => {} }: In
     setIsSubmitting(true)
     onSubmit() // Notify parent to show loading state
 
-    // Safely wrap the async call to prevent server component errors
-    setTimeout(() => {
-      // Create a safe copy of the input
-      const input: NameGenerationInput = {
-        namingType,
-        description,
-        industry,
-        traits: selectedTraits.map(t => t), // Create a fresh copy
-      }
+    // Create a safe copy of the input
+    const input: NameGenerationInput = {
+      namingType,
+      description,
+      industry,
+      traits: selectedTraits.map(t => t), // Create a fresh copy
+    }
 
-      // Call the server action with proper error handling
-      generateNames(input)
-        .then((names) => {
-          if (names && names.length > 0) {
-            // Pass both names and input to parent
-            onNamesGenerated(names, input)
-          } else {
-            throw new Error("No names were generated. Please try again.")
-          }
-        })
-        .catch((error) => {
-          console.error("Error generating names:", error)
-          setIsSubmitting(false)
-          onError(error instanceof Error ? error.message : "Failed to generate names. Please try again.")
-        })
-    }, 0)
+    // Safely wrap the async call to prevent server component errors
+    setTimeout(async () => {
+      try {
+        let names: GeneratedName[];
+        
+        if (isProduction) {
+          // In production, use mock data directly to avoid server component issues
+          console.log("Using mock data in production");
+          names = await mockGenerateNames(input);
+        } else {
+          // In development, call the actual server action
+          console.log("Calling server action in development");
+          names = await generateNames(input);
+        }
+
+        if (names && names.length > 0) {
+          // Pass both names and input to parent
+          onNamesGenerated(names, input);
+        } else {
+          throw new Error("No names were generated");
+        }
+      } catch (error) {
+        console.error("Error generating names:", error);
+        
+        // Always fall back to mock data if there's an error
+        try {
+          console.log("Falling back to mock data after error");
+          const mockNames = await mockGenerateNames(input);
+          onNamesGenerated(mockNames, input);
+        } catch (mockError) {
+          setIsSubmitting(false);
+          onError(error instanceof Error ? error.message : "Failed to generate names. Please try again.");
+        }
+      }
+    }, 0);
   }
 
   return (

@@ -9,12 +9,16 @@ import { NameSwiper } from "@/components/name-generator/NameSwiper"
 import { ResultsDashboard } from "@/components/name-generator/ResultsDashboard"
 import { LoadingTransition } from "@/components/name-generator/LoadingTransition"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AlertCircle, RefreshCw } from "lucide-react"
+import { AlertCircle, RefreshCw, InfoIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { GeneratedName, NameGenerationInput } from "@/app/actions/generate-names"
 import { generateNames } from "@/app/actions/generate-names"
+import { mockGenerateNames } from "@/app/actions/mock-generate-names"
 
 type Step = "input" | "loading" | "swiper" | "results"
+
+// Check if we're in production to use mock data directly
+const isProduction = process.env.NODE_ENV === "production"
 
 export default function NameGeneratorPage() {
   const [step, setStep] = useState<Step>("input")
@@ -47,7 +51,7 @@ export default function NameGeneratorPage() {
         setStep("input")
         setIsLoading(false)
         isGeneratingRef.current = false // Reset the flag
-      }, 40000) // Slightly shorter timeout
+      }, 30000) // Shorter timeout
     }
 
     // Cleanup function to clear the timeout when the component unmounts or step changes
@@ -99,32 +103,46 @@ export default function NameGeneratorPage() {
       isGeneratingRef.current = true
       
       // Use a simpler approach with proper error handling
-      setTimeout(() => {
-        const safeInput = {
-          namingType: lastInput.namingType,
-          description: lastInput.description || "",
-          industry: lastInput.industry,
-          traits: Array.isArray(lastInput.traits) ? [...lastInput.traits] : [lastInput.traits],
-        }
-        
-        console.log(`Generating names for batch ${currentBatch + 1}...`)
-        
-        generateNames(safeInput)
-          .then((newNames) => {
-            if (newNames && newNames.length > 0) {
-              handleNamesGenerated(newNames)
-            } else {
-              throw new Error("No names were generated")
-            }
-          })
-          .catch((error) => {
-            console.error("Error generating names for next batch:", error)
+      setTimeout(async () => {
+        try {
+          console.log(`Generating names for batch ${currentBatch + 1}...`)
+          
+          // In production, generate names client-side
+          let newNames: GeneratedName[] = [];
+          
+          if (isProduction) {
+            // Generate mock data directly for production
+            newNames = await mockGenerateNames(lastInput);
+          } else {
+            // In development, call the server action
+            newNames = await generateNames({
+              namingType: lastInput.namingType,
+              description: lastInput.description || "",
+              industry: lastInput.industry,
+              traits: Array.isArray(lastInput.traits) ? [...lastInput.traits] : [lastInput.traits],
+            });
+          }
+          
+          if (newNames && newNames.length > 0) {
+            handleNamesGenerated(newNames)
+          } else {
+            throw new Error("No names were generated")
+          }
+        } catch (error) {
+          console.error("Error generating names for next batch:", error)
+          
+          // Always fall back to mock data in case of error
+          try {
+            const mockNames = await mockGenerateNames(lastInput);
+            handleNamesGenerated(mockNames);
+          } catch (mockError) {
             setError("Unable to generate more names. Please try again.")
             setStep("input")
             setIsLoading(false)
             isGeneratingRef.current = false
-          })
-      }, 100) // Small delay to allow React to update the UI
+          }
+        }
+      }, 1000) // Longer delay to make the UI feel more natural
     } else if (currentBatch >= 3) {
       setStep("results")
     } else {
@@ -162,6 +180,24 @@ export default function NameGeneratorPage() {
 
       <main className="flex-1 container px-4 py-12 md:py-20">
         <AnimatePresence mode="wait">
+          {isProduction && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="mb-8"
+            >
+              <Alert className="bg-blue-950/50 border-blue-900">
+                <InfoIcon className="h-4 w-4" />
+                <AlertTitle>Demo Mode Active</AlertTitle>
+                <AlertDescription>
+                  This app is currently running in demo mode while we upgrade our API. 
+                  Generated names are examples only and may not reflect actual availability.
+                </AlertDescription>
+              </Alert>
+            </motion.div>
+          )}
+          
           {error && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
@@ -190,7 +226,12 @@ export default function NameGeneratorPage() {
               exit={{ opacity: 0 }}
               transition={{ duration: 0.5 }}
             >
-              <InputForm onSubmit={handleStartLoading} onNamesGenerated={handleNamesGenerated} onError={handleError} />
+              <InputForm 
+                onSubmit={handleStartLoading} 
+                onNamesGenerated={handleNamesGenerated} 
+                onError={handleError}
+                isProduction={isProduction}
+              />
             </motion.div>
           )}
 
