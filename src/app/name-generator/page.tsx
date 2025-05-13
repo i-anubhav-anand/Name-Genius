@@ -77,23 +77,35 @@ export default function NameGeneratorPage() {
     setLikedNames((prev) => [...prev, name])
   }
 
-  const handleBatchComplete = async () => {
+  const handleBatchComplete = () => {
     if (currentBatch < 3) {
       setCurrentBatch((prev) => prev + 1)
       handleStartLoading()
       
-      // Generate new names for the next batch using the saved input
+      // Instead of calling the server action directly, let's create a wrapper component
+      // that has the same API as InputForm to keep things consistent
       if (lastInput) {
-        try {
-          console.log(`Generating names for batch ${currentBatch + 1}...`)
-          const newNames = await generateNames(lastInput)
-          handleNamesGenerated(newNames)
-        } catch (error) {
-          console.error("Error generating names for next batch:", error)
-          setError(error instanceof Error ? error.message : "Failed to generate names. Please try again.")
-          setStep("input")
-          setIsLoading(false)
+        // Create a fake event object to prevent issues
+        const generateNextBatch = async () => {
+          try {
+            console.log(`Generating names for batch ${currentBatch + 1}...`)
+            const newNames = await generateNames({...lastInput})
+            handleNamesGenerated(newNames)
+          } catch (error) {
+            console.error("Error generating names for next batch:", error)
+            setIsLoading(false)
+            setError(error instanceof Error ? error.message : "Failed to generate names. Please try again.")
+            setStep("input")
+          }
         }
+        
+        // Call the function safely
+        generateNextBatch().catch((error) => {
+          console.error("Unhandled error in generateNextBatch:", error)
+          setIsLoading(false)
+          setError("An unexpected error occurred. Please try again.")
+          setStep("input")
+        })
       } else {
         // Fallback in case input wasn't saved
         setError("Unable to generate more names. Please start over.")
