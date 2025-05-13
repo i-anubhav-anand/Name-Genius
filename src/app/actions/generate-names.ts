@@ -16,14 +16,13 @@ export type GeneratedName = {
   domainAvailable?: boolean
 }
 
-// Mark the server action with 'use server' to ensure it's treated as a server action
+// Server action for name generation
 export async function generateNames(input: NameGenerationInput): Promise<GeneratedName[]> {
-  // IMPORTANT: For now, use mock data directly to avoid Server Components render errors
-  // This is a temporary solution until we can debug the production environment issues
-  if (process.env.NODE_ENV === "production") {
-    console.log("Production environment detected - using mock data directly");
-    return mockGenerateNames(input);
-  }
+  // Remove the production mode bypass
+  // if (process.env.NODE_ENV === "production") {
+  //   console.log("Production environment detected - using mock data directly");
+  //   return mockGenerateNames(input);
+  // }
   
   try {
     // Check for valid input to prevent server errors
@@ -56,30 +55,62 @@ export async function generateNames(input: NameGenerationInput): Promise<Generat
       return mockGenerateNames(input);
     }
 
-    // Simple fetch with one retry, using a safer approach for production
+    // Create clean input object to avoid reference issues
+    const cleanInput = {
+      namingType: input.namingType,
+      description: input.description || "",
+      industry: input.industry,
+      traits: Array.isArray(input.traits) ? [...input.traits] : [input.traits]
+    };
+    
+    console.log(`Making API request to ${baseUrl}/api/generate-names`);
+    
+    // Use proper fetch with retry logic
     try {
-      // Create clean input object to avoid reference issues
-      const cleanInput = {
-        namingType: input.namingType,
-        description: input.description || "",
-        industry: input.industry,
-        traits: Array.isArray(input.traits) ? [...input.traits] : [input.traits]
-      };
-      
-      console.log(`Making API request to ${baseUrl}/api/generate-names`);
-      
-      // Use a direct mock implementation for now
-      return mockGenerateNames(input);
-      
+      const response = await fetch(`${baseUrl}/api/generate-names`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(cleanInput),
+        // Adding a timeout using AbortController
+        signal: AbortSignal.timeout(25000), // 25 second timeout
+      });
+        
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `API request failed with status: ${response.status}`);
+      }
+        
+      const data = await response.json();
+        
+      if (data.names && Array.isArray(data.names) && data.names.length > 0) {
+        return data.names;
+      } else {
+        throw new Error("Invalid response format from API");
+      }
     } catch (fetchError: any) {
-      console.warn("API request failed, using mock data", fetchError);
-      return mockGenerateNames(input);
+      console.warn("API request failed, falling back to mock data", fetchError);
+      
+      // Only use mock data if we have a connection issue or timeout
+      if (fetchError?.name === "AbortError" || fetchError?.name === "TypeError") {
+        return mockGenerateNames(input);
+      }
+      
+      // Otherwise propagate the error
+      throw fetchError;
     }
   } catch (error) {
     console.error("Error generating names:", error);
-    // Always return mock data instead of throwing to prevent server rendering errors
-    console.warn("Falling back to mock data due to error");
-    return mockGenerateNames(input);
+    
+    // Only fall back to mock data for certain types of errors
+    if (error instanceof TypeError || error instanceof ReferenceError) {
+      console.warn("Falling back to mock data due to error");
+      return mockGenerateNames(input);
+    }
+    
+    // Otherwise propagate the error
+    throw error;
   }
 }
 

@@ -104,17 +104,8 @@ export function InputForm({
     // Safely wrap the async call to prevent server component errors
     setTimeout(async () => {
       try {
-        let names: GeneratedName[];
-        
-        if (isProduction) {
-          // In production, use mock data directly to avoid server component issues
-          console.log("Using mock data in production");
-          names = await mockGenerateNames(input);
-        } else {
-          // In development, call the actual server action
-          console.log("Calling server action in development");
-          names = await generateNames(input);
-        }
+        // Call the server action with proper error handling
+        const names = await generateNames(input);
 
         if (names && names.length > 0) {
           // Pass both names and input to parent

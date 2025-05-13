@@ -17,8 +17,8 @@ import { mockGenerateNames } from "@/app/actions/mock-generate-names"
 
 type Step = "input" | "loading" | "swiper" | "results"
 
-// Check if we're in production to use mock data directly
-const isProduction = process.env.NODE_ENV === "production"
+// Remove the production check since we now have API keys configured
+// const isProduction = process.env.NODE_ENV === "production" 
 
 export default function NameGeneratorPage() {
   const [step, setStep] = useState<Step>("input")
@@ -107,21 +107,13 @@ export default function NameGeneratorPage() {
         try {
           console.log(`Generating names for batch ${currentBatch + 1}...`)
           
-          // In production, generate names client-side
-          let newNames: GeneratedName[] = [];
-          
-          if (isProduction) {
-            // Generate mock data directly for production
-            newNames = await mockGenerateNames(lastInput);
-          } else {
-            // In development, call the server action
-            newNames = await generateNames({
-              namingType: lastInput.namingType,
-              description: lastInput.description || "",
-              industry: lastInput.industry,
-              traits: Array.isArray(lastInput.traits) ? [...lastInput.traits] : [lastInput.traits],
-            });
-          }
+          // Now directly use server action for the API call since we have it configured
+          const newNames = await generateNames({
+            namingType: lastInput.namingType,
+            description: lastInput.description || "",
+            industry: lastInput.industry,
+            traits: Array.isArray(lastInput.traits) ? [...lastInput.traits] : [lastInput.traits],
+          });
           
           if (newNames && newNames.length > 0) {
             handleNamesGenerated(newNames)
@@ -180,23 +172,7 @@ export default function NameGeneratorPage() {
 
       <main className="flex-1 container px-4 py-12 md:py-20">
         <AnimatePresence mode="wait">
-          {isProduction && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="mb-8"
-            >
-              <Alert className="bg-blue-950/50 border-blue-900">
-                <InfoIcon className="h-4 w-4" />
-                <AlertTitle>Demo Mode Active</AlertTitle>
-                <AlertDescription>
-                  This app is currently running in demo mode while we upgrade our API. 
-                  Generated names are examples only and may not reflect actual availability.
-                </AlertDescription>
-              </Alert>
-            </motion.div>
-          )}
+          {/* Remove the isProduction banner */}
           
           {error && (
             <motion.div
@@ -230,7 +206,6 @@ export default function NameGeneratorPage() {
                 onSubmit={handleStartLoading} 
                 onNamesGenerated={handleNamesGenerated} 
                 onError={handleError}
-                isProduction={isProduction}
               />
             </motion.div>
           )}
